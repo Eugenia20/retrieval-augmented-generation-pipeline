@@ -6,10 +6,7 @@ from app.core.config import settings
 import re
 
 
-
 # DOMAIN VALIDATION
-
-
 def validate_email_domain(email: str):
     domain = email.split("@")[-1]
 
@@ -17,24 +14,65 @@ def validate_email_domain(email: str):
         raise HTTPException(status_code=400, detail="Invalid email domain")
 
 
-
 # CREATE USER
-
-
-def create_user(db: Session, email: str, password: str, is_admin: bool = False):
+def create_user(
+    db: Session,
+    email: str,
+    password: str,
+    department: str,
+    is_admin: bool = False
+):
     validate_email_domain(email)
     validate_password(password)
+
+    # normalize department
+    department = department.strip().lower()
+
+    # generate employee ID
+    prefix = get_prefix(department)
+    employee_id = generate_employee_id(db, prefix)
+
     user = User(
         email=email,
         password_hash=hash_password(password),
-        is_admin=is_admin
+        is_admin=is_admin,
+        employee_id=employee_id,
+        department=department
     )
 
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    return user
+    return {
+        "message": "User created",
+        "user_id": user.id,
+        "employee_id": user.employee_id,
+        "department": user.department
+    }
+
+def generate_employee_id(db: Session, prefix: str):
+    last_user = (
+        db.query(User)
+        .filter(User.employee_id.like(f"{prefix}%"))
+        .order_by(User.employee_id.desc())
+        .first()
+    )
+
+    if not last_user:
+        return f"{prefix}0001"
+
+    last_number = int(last_user.employee_id[len(prefix):])
+    return f"{prefix}{last_number + 1:04d}"
+
+def get_prefix(department: str):
+    mapping = {
+        "Tech": "T2",
+        "Business": "B2",
+        "Hr": "H2",
+        "Admin": "A2"
+    }
+    return mapping.get(department.lower(), "U2")
 
 def validate_password(password: str):
     if len(password) < 8:
@@ -65,3 +103,4 @@ def authenticate_user(db: Session, email: str, password: str):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     return user
+

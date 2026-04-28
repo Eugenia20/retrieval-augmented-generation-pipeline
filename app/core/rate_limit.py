@@ -1,27 +1,43 @@
 import time
-from fastapi import Request, HTTPException
+from fastapi import HTTPException
+from functools import wraps
 
-# simple in-memory store (upgrade to Redis later)
+# simple in-memory store
 requests_log = {}
 
-RATE_LIMIT = 10       # requests
-WINDOW = 60          # seconds
 
+def rate_limiter(limit: int, window: int):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # identify user by IP (basic)
+            request = kwargs.get("request")
 
-def rate_limiter(request: Request):
-    client_ip = request.client.host
-    current_time = time.time()
+            if request:
+                ip = request.client.host
+            else:
+                ip = "global"
 
-    if client_ip not in requests_log:
-        requests_log[client_ip] = []
+            now = time.time()
 
-    # remove old requests
-    requests_log[client_ip] = [
-        t for t in requests_log[client_ip]
-        if current_time - t < WINDOW
-    ]
+            if ip not in requests_log:
+                requests_log[ip] = []
 
-    if len(requests_log[client_ip]) >= RATE_LIMIT:
-        raise HTTPException(status_code=429, detail="Too many requests")
+            # remove old requests
+            requests_log[ip] = [
+                t for t in requests_log[ip]
+                if now - t < window
+            ]
 
-    requests_log[client_ip].append(current_time)
+            if len(requests_log[ip]) >= limit:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many requests"
+                )
+
+            requests_log[ip].append(now)
+
+            return func(*args, **kwargs)
+
+        return wrapper
+    return decorator

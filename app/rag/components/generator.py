@@ -10,28 +10,28 @@ def generate_answer(query: str, context: str, language: str):
         return "I don't have enough information"
 
     # =========================
-    # 2. Strong prompt
+    # 2. prompt
     # =========================
     prompt = f"""
-You are an expert AI assistant.
+    You are an expert AI assistant.
 
-Rules:
-- Answer ONLY using the provided context
-- Do NOT make up information
-- If the answer is not in the context, say:
-  "I don't have enough information"
-- Be clear, structured, and concise
-- Use bullet points if helpful
-- Answer in the same language as the question
+    Rules:
+    - Answer ONLY using the provided context
+    - Do NOT make up information
+    - If the answer is not in the context, say:
+      "I don't have enough information"
+    - Be clear, structured, and concise
+    - Use bullet points if helpful
+    - Answer MUST be in {language}
 
-Context:
-{context}
+    Context:
+    {context}
 
-Question:
-{query}
+    Question:
+    {query}
 
-Answer:
-"""
+    Answer:
+    """
 
     # =========================
     # 3. Call Ollama safely

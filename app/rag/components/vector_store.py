@@ -1,49 +1,49 @@
 import faiss
 import numpy as np
+import os
+import json
 
 from app.rag.components.embeddings import embed_text
 
-# in-memory store (upgrade later to persistent)
+
+FAISS_PATH = "faiss.index"
+DOCS_PATH = "documents.json"
+
+# =========================
+# GLOBAL STORE
+# =========================
 documents = []
 index = None
 
 
 # =========================
-# BUILD INDEX (INITIAL LOAD)
+# ADD TO INDEX (APPEND)
 # =========================
-def build_index(texts: list[str]):
+def add_to_index(items: list[dict]):
     global index, documents
 
-    documents = texts.copy()
+    texts = [item["text"] for item in items]
 
     embeddings = [embed_text(t) for t in texts]
     embeddings = np.array(embeddings).astype("float32")
 
-    dimension = embeddings.shape[1]
-    index = faiss.IndexFlatL2(dimension)
-
-    index.add(embeddings)
-
-
-# =========================
-# ADD NEW DOCUMENTS
-# =========================
-def add_to_index(texts: list[str]):
-    global index, documents
-
-    if not texts:
-        return
-
-    embeddings = [embed_text(t) for t in texts]
-    embeddings = np.array(embeddings).astype("float32")
-
-    # If index doesn't exist → create it
     if index is None:
         dimension = embeddings.shape[1]
         index = faiss.IndexFlatL2(dimension)
 
     index.add(embeddings)
-    documents.extend(texts)
+    documents.extend([
+        {
+            "text": item["text"],
+            "document_id": item["document_id"],
+            "department": item.get("department"),
+            "embedding": emb.tolist()
+        }
+        for item, emb in zip(items, embeddings)
+    ])
+
+    #  SAVE AFTER ADDING
+    save_index()
 
 
 # =========================
@@ -52,12 +52,42 @@ def add_to_index(texts: list[str]):
 def search(query: str, k: int = 3):
     global index, documents
 
-    if index is None or len(documents) == 0:
+    if index is None:
         return []
 
-    query_vector = embed_text(query)
+    query_vector = np.array(embed_text(query)).astype("float32")
     query_vector = np.array([query_vector]).astype("float32")
 
     distances, indices = index.search(query_vector, k)
 
-    return [documents[i] for i in indices[0] if i < len(documents)]
+    results = []
+    for i in indices[0]:
+        if i < len(documents):  # safety check
+            results.append(documents[i])
+
+    return results
+
+
+# =========================
+# SAVE INDEX
+# =========================
+def save_index():
+    if index is not None:
+        faiss.write_index(index, FAISS_PATH)
+
+        with open(DOCS_PATH, "w", encoding="utf-8") as f:
+            json.dump(documents, f, ensure_ascii=False)
+
+
+# =========================
+# LOAD INDEX
+# =========================
+def load_index():
+    global index, documents
+
+    if os.path.exists(FAISS_PATH):
+        index = faiss.read_index(FAISS_PATH)
+
+    if os.path.exists(DOCS_PATH):
+        with open(DOCS_PATH, "r", encoding="utf-8") as f:
+            documents = json.load(f)
