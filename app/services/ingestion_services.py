@@ -1,19 +1,24 @@
 from app.rag.components.vector_store import add_to_index
-
+import re
 
 # =========================
 # TEXT CHUNKING
 # =========================
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50):
+def chunk_text(text: str, max_size: int = 500):
+    sentences = re.split(r'(?<=[.!?]) +', text)
+
     chunks = []
-    start = 0
+    current_chunk = ""
 
-    while start < len(text):
-        end = start + chunk_size
-        chunk = text[start:end]
-        chunks.append(chunk)
+    for sentence in sentences:
+        if len(current_chunk) + len(sentence) <= max_size:
+            current_chunk += " " + sentence
+        else:
+            chunks.append(current_chunk.strip())
+            current_chunk = sentence
 
-        start += chunk_size - overlap
+    if current_chunk:
+        chunks.append(current_chunk.strip())
 
     return chunks
 

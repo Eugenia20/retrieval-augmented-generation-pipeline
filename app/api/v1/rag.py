@@ -14,7 +14,7 @@ from app.services.ingestion_services import ingest_document
 from app.services.file_parser import parse_pdf, parse_docx, parse_txt
 
 from app.utils.pagination import paginate
-
+from app.core.logger import logger
 
 router = APIRouter(prefix="/rag", tags=["RAG"])
 
@@ -24,19 +24,18 @@ router = APIRouter(prefix="/rag", tags=["RAG"])
 # =========================
 @router.post("/query")
 @rate_limiter(limit=10, window=60)
-def query_rag(
+async def query_rag(
     query: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    return handle_query(
+    return await handle_query(
         db,
         current_user.id,
         current_user.employee_id,
         current_user.department,
         query
     )
-
 
 # =========================
 # USER HISTORY
@@ -45,14 +44,27 @@ def query_rag(
 def get_history(
     page: int = 1,
     limit: int = 10,
+    search: str = None,
+    language: str = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    user_queries = db.query(Query).filter(
+    query = db.query(Query).filter(
         Query.user_id == current_user.id
     )
 
-    return paginate(user_queries, page, limit)
+    #  search filter
+    if search:
+        query = query.filter(Query.question.ilike(f"%{search}%"))
+
+    #  language filter
+    if language:
+        query = query.filter(Query.language == language)
+
+    # sorting
+    query = query.order_by(Query.created_at.desc())
+
+    return paginate(query, page, limit)
 
 
 # =========================
@@ -81,6 +93,7 @@ def upload_document(
     else:
         return {"error": "Unsupported file type"}
 
+    logger.info(f"Document uploaded: {filename} by admin {current_admin.id}")
     # =========================
     # SAVE DOCUMENT METADATA
     # =========================

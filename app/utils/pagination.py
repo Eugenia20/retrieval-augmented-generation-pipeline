@@ -1,7 +1,11 @@
-def paginate(queryset, page: int = 1, limit: int = 10):
-    total = queryset.count()
+def paginate(query, page: int = 1, limit: int = 10):
+    # safety limits
+    page = max(page, 1)
+    limit = min(max(limit, 1), 100)
 
-    items = queryset.offset((page - 1) * limit).limit(limit).all()
+    total = query.count()
+
+    items = query.offset((page - 1) * limit).limit(limit).all()
 
     return {
         "total": total,

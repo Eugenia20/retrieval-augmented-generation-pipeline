@@ -4,7 +4,7 @@ import os
 import json
 
 from app.rag.components.embeddings import embed_text
-
+from app.rag.components.bm25_store import build_bm25
 
 FAISS_PATH = "faiss.index"
 DOCS_PATH = "documents.json"
@@ -41,7 +41,7 @@ def add_to_index(items: list[dict]):
         }
         for item, emb in zip(items, embeddings)
     ])
-
+    build_bm25(documents)
     #  SAVE AFTER ADDING
     save_index()
 

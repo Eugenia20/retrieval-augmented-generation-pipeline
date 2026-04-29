@@ -1,45 +1,39 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.db.session import get_db
 from app.models.user import User
-from app.models.evaluation import Evaluation
-from app.core.dependencies import get_current_admin
 from app.models.query import Query
+from app.models.evaluation import Evaluation
+from app.models.document import Document
+
+from app.core.dependencies import get_current_admin
 from app.utils.pagination import paginate
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
-# =========================
-# GET ALL USERS
-# =========================
 
+# =========================
+# USERS (PAGINATED)
+# =========================
 @router.get("/users")
 def get_users(
+    page: int = 1,
     limit: int = 10,
-    offset: int = 0,
     db: Session = Depends(get_db),
     admin: User = Depends(get_current_admin)
 ):
-    users = db.query(User).offset(offset).limit(limit).all()
-
-    return [
-        {
-            "id": u.id,
-            "email": u.email,
-            "is_active": u.is_active,
-            "is_admin": u.is_admin
-        }
-        for u in users
-    ]
+    query = db.query(User).order_by(User.created_at.desc())
+    return paginate(query, page, limit)
 
 
 # =========================
-# ACTIVATE USER
+# ACTIVATE / DEACTIVATE (MERGED)
 # =========================
-
-@router.patch("/users/{user_id}/activate")
-def activate_user(
+@router.patch("/users/{user_id}/status")
+def update_user_status(
     user_id: int,
+    is_active: bool,
     db: Session = Depends(get_db),
     admin: User = Depends(get_current_admin)
 ):
@@ -48,37 +42,17 @@ def activate_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    user.is_active = True
+    user.is_active = is_active
     db.commit()
 
-    return {"message": "User activated"}
+    return {
+        "message": f"User {'activated' if is_active else 'deactivated'}"
+    }
 
 
 # =========================
-# DEACTIVATE USER
+# QUERIES (PAGINATED)
 # =========================
-
-@router.patch("/users/{user_id}/deactivate")
-def deactivate_user(
-    user_id: int,
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
-):
-    user = db.query(User).filter(User.id == user_id).first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    user.is_active = False
-    db.commit()
-
-    return {"message": "User deactivated"}
-
-
-# =========================
-# GET ALL QUERIES (ADMIN VIEW)
-# =========================
-
 @router.get("/queries")
 def get_all_queries(
     page: int = 1,
@@ -86,22 +60,33 @@ def get_all_queries(
     db: Session = Depends(get_db),
     admin: User = Depends(get_current_admin)
 ):
-    query = db.query(Query)
-
+    query = db.query(Query).order_by(Query.created_at.desc())
     return paginate(query, page, limit)
 
 
 # =========================
-# GET ALL EVALUATIONS
+# DOCUMENTS (IMPORTANT FOR RAG)
 # =========================
-
-@router.get("/evaluations")
-def get_evaluations(
+@router.get("/documents")
+def get_documents(
+    page: int = 1,
     limit: int = 10,
-    offset: int = 0,
     db: Session = Depends(get_db),
     admin: User = Depends(get_current_admin)
 ):
-    evaluations = db.query(Evaluation).offset(offset).limit(limit).all()
+    query = db.query(Document).order_by(Document.created_at.desc())
+    return paginate(query, page, limit)
 
-    return evaluations
+
+# =========================
+# EVALUATIONS (FIXED PAGINATION)
+# =========================
+@router.get("/evaluations")
+def get_evaluations(
+    page: int = 1,
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    query = db.query(Evaluation).order_by(Evaluation.created_at.desc())
+    return paginate(query, page, limit)

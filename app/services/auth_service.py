@@ -4,6 +4,7 @@ from app.models.user import User
 from app.core.security import hash_password, verify_password
 from app.core.config import settings
 import re
+from app.core.logger import logger
 
 
 # DOMAIN VALIDATION
@@ -43,7 +44,7 @@ def create_user(
     db.add(user)
     db.commit()
     db.refresh(user)
-
+    logger.info(f"New user created: {email}, dept={department}, id={employee_id}")
     return {
         "message": "User created",
         "user_id": user.id,
@@ -67,12 +68,13 @@ def generate_employee_id(db: Session, prefix: str):
 
 def get_prefix(department: str):
     mapping = {
-        "Tech": "T2",
-        "Business": "B2",
-        "Hr": "H2",
-        "Admin": "A2"
+        "tech": "T2",
+        "business": "B2",
+        "hr": "H2",
+        "admin": "A2"
     }
-    return mapping.get(department.lower(), "U2")
+    return mapping.get(department, "U2")
+
 
 def validate_password(password: str):
     if len(password) < 8:
@@ -94,13 +96,18 @@ def authenticate_user(db: Session, email: str, password: str):
     user = db.query(User).filter(User.email == email).first()
 
     if not user:
+        logger.warning(f"Failed login attempt: {email} (user not found)")
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not user.is_active:
+        logger.warning(f"Login blocked (inactive user): {email}")
         raise HTTPException(status_code=403, detail="User is deactivated")
 
     if not verify_password(password, user.password_hash):
+        logger.warning(f"Failed login attempt: {email} (wrong password)")
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    logger.info(f"User login successful: {email}")
 
     return user
 

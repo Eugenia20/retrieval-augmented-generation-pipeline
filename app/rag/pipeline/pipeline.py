@@ -3,17 +3,26 @@ from app.rag.language.translator import translate_to_english, translate_from_eng
 from app.rag.components.retriever import retrieve_documents
 from app.rag.components.generator import generate_answer
 from app.services.evaluation_service import evaluate_response
-
+from app.rag.language.language_controller import detect_target_language
+from app.rag.components.reranker import rerank
+from app.core.cache import get_from_cache, save_to_cache
+from app.rag.components.query_rewriter import rewrite_query
 
 SUPPORTED_LANGUAGES = ["en", "ru", "zh"]
 
 
-def process_query(query: str, user_department: str):
+async def process_query(query: str, user_department: str):
+
+    # =========================
+    # 0. CACHE CHECK
+    # =========================
+    cached = get_from_cache(query)
+    if cached:
+        return cached
+
     # =========================
     # 1. Detect language
     # =========================
-    from app.rag.language.language_controller import detect_target_language
-
     detected_language = detect_language(query)
 
     if detected_language not in SUPPORTED_LANGUAGES:
@@ -22,7 +31,7 @@ def process_query(query: str, user_department: str):
     target_language = detect_target_language(query, detected_language)
 
     # =========================
-    # 2. Translate only if needed
+    # 2. Translate
     # =========================
     translated_query = (
         translate_to_english(query)
@@ -30,37 +39,54 @@ def process_query(query: str, user_department: str):
         else query
     )
 
+    translated_query = rewrite_query(translated_query)
+
     # =========================
-    # 3. Retrieve documents
+    # 3. Retrieve + Rerank
     # =========================
-    docs = retrieve_documents(
+    candidates = retrieve_documents(
         translated_query,
         "en",
         user_department,
-        k=5
+        k=10
     )
 
-    texts = [d["text"] for d in docs]
+    docs = rerank(translated_query, candidates, top_k=5)
 
-    context = "\n\n---\n\n".join(texts)
+    # 🔥 strict filter
+    docs = [d for d in docs if d["score"] > 0.4]
+
+    if not docs:
+        result = {
+            "query": query,
+            "answer": "I don't have enough information",
+            "confidence": 0,
+            "sources": [],
+            "evaluation": {}
+        }
+
+        save_to_cache(query, result)
+        return result
 
     # =========================
     # 4. Build context
     # =========================
-    context = "\n\n---\n\n".join(docs)
+    texts = [d["text"] for d in docs]
+    context = "\n\n---\n\n".join(texts)
 
     # =========================
-    # 5. Generate answer
+    # 5. Generate answer (ASYNC)
     # =========================
-    answer_en = generate_answer(translated_query, context, target_language)
+    answer_en = await generate_answer(translated_query, context, target_language)
 
     # =========================
-    # 6. Translate back ONLY if needed
+    # 6. Translate back
     # =========================
-    if target_language != "en":
-        final_answer = translate_from_english(answer_en, target_language)
-    else:
-        final_answer = answer_en
+    final_answer = (
+        translate_from_english(answer_en, target_language)
+        if target_language != "en"
+        else answer_en
+    )
 
     # =========================
     # 7. Confidence
@@ -77,9 +103,9 @@ def process_query(query: str, user_department: str):
     )
 
     # =========================
-    # 9. Return structured output
+    # 9. Final result
     # =========================
-    return {
+    result = {
         "query": query,
         "translated_query": translated_query,
         "detected_language": detected_language,
@@ -89,3 +115,10 @@ def process_query(query: str, user_department: str):
         "sources": docs,
         "evaluation": evaluation
     }
+
+    # =========================
+    # SAVE TO CACHE
+    # =========================
+    save_to_cache(query, result)
+
+    return result

@@ -1,16 +1,23 @@
 import json
+
 from app.models.query import Query
 from app.models.evaluation import Evaluation
 from app.models.document import Document
+from app.models.document_access import DocumentAccess
+
 from app.rag.pipeline.pipeline import process_query
+from app.core.logger import logger
 
 
-def handle_query(db, user_id: int, employee_id: str, user_department: str, query: str):
+async def handle_query(db, user_id: int, employee_id: str, user_department: str, query: str):
     try:
-        result = process_query(query, user_department)
+        # =========================
+        # RUN PIPELINE (ASYNC)
+        # =========================
+        result = await process_query(query, user_department)
 
         answer = result["answer"]
-        language = result["language"]
+        language = result.get("language", "en")
         sources = result.get("sources", [])
 
         # =========================
@@ -26,7 +33,7 @@ def handle_query(db, user_id: int, employee_id: str, user_department: str, query
         )
 
         db.add(db_query)
-        db.flush()
+        db.flush()  # get ID
 
         # =========================
         # SAVE EVALUATION
@@ -42,15 +49,29 @@ def handle_query(db, user_id: int, employee_id: str, user_department: str, query
             )
             db.add(db_eval)
 
-        db.commit()
-
         # =========================
-        # MAP DOCUMENT IDS → FILENAMES
+        # LOG DOCUMENT ACCESS
         # =========================
         doc_ids = list(set([
             d["document_id"] for d in sources
         ]))
 
+        for doc_id in doc_ids:
+            access_log = DocumentAccess(
+                user_id=user_id,
+                document_id=doc_id,
+                query_id=db_query.id
+            )
+            db.add(access_log)
+
+        # =========================
+        # COMMIT EVERYTHING ONCE
+        # =========================
+        db.commit()
+
+        # =========================
+        # MAP DOCUMENT IDS → FILENAMES
+        # =========================
         docs_from_db = db.query(Document).filter(
             Document.id.in_(doc_ids)
         ).all()
@@ -66,8 +87,10 @@ def handle_query(db, user_id: int, employee_id: str, user_department: str, query
         ]
 
         # =========================
-        # FINAL RESPONSE
+        # LOG SUCCESS
         # =========================
+        logger.info(f"RAG query processed: user={user_id}, query='{query}'")
+
         return {
             "answer": answer,
             "confidence": result.get("confidence"),
@@ -77,6 +100,9 @@ def handle_query(db, user_id: int, employee_id: str, user_department: str, query
 
     except Exception as e:
         db.rollback()
+
+        logger.error(f"RAG ERROR: {str(e)}")
+
         return {
             "answer": "Something went wrong while processing your request.",
             "error": str(e)

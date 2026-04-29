@@ -6,6 +6,7 @@ from app.services.auth_service import create_user, authenticate_user
 from app.core.security import create_access_token, create_refresh_token
 from app.core.config import settings
 from app.core.rate_limit import rate_limiter
+from app.models.refresh_token import RefreshToken
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -15,9 +16,14 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 # =========================
 
 @router.post("/register")
-def register(email: str, password: str, db: Session = Depends(get_db)):
-    user = create_user(db, email, password)
-    return {"message": "User created", "user_id": user.id}
+def register(
+    email: str,
+    password: str,
+    department: str,
+    db: Session = Depends(get_db)
+):
+    return create_user(db, email, password, department)
+
 
 
 # =========================
@@ -44,12 +50,19 @@ def login(
         "sub": str(user.id)
     })
 
-    #  store refresh token in cookie
+    #  SAVES IN DB
+    db.add(RefreshToken(
+        user_id=user.id,
+        token=refresh_token_value
+    ))
+    db.commit()
+
+    #  COOKIE
     response.set_cookie(
         key="refresh_token",
         value=refresh_token_value,
         httponly=True,
-        secure=False,   # change to True in production (HTTPS)
+        secure=False,
         samesite="lax"
     )
 
@@ -58,17 +71,28 @@ def login(
         "token_type": "bearer"
     }
 
-
 # =========================
 # REFRESH TOKEN
 # =========================
 
 @router.post("/refresh")
-def refresh_access_token(request: Request):
+def refresh_access_token(
+    request: Request,
+    db: Session = Depends(get_db)
+):
     refresh_token_cookie = request.cookies.get("refresh_token")
 
     if not refresh_token_cookie:
         raise HTTPException(status_code=401, detail="Missing refresh token")
+
+    #  CHECKs DB FIRST
+    token_in_db = db.query(RefreshToken).filter(
+        RefreshToken.token == refresh_token_cookie,
+        RefreshToken.is_revoked == False
+    ).first()
+
+    if not token_in_db:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
     try:
         payload = jwt.decode(
@@ -90,14 +114,25 @@ def refresh_access_token(request: Request):
 
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
-
-
 # =========================
 # LOGOUT
 # =========================
 
 @router.post("/logout")
-def logout(response: Response):
+def logout(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db)
+):
+    refresh_token = request.cookies.get("refresh_token")
+
+    if refresh_token:
+        db.query(RefreshToken).filter(
+            RefreshToken.token == refresh_token
+        ).update({"is_revoked": True})
+
+        db.commit()
+
     response.delete_cookie("refresh_token")
 
     return {"message": "Logged out successfully"}
