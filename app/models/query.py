@@ -10,3 +10,4 @@ class Query(Base):
     question = Column(Text)
     answer = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
+    language = Column(String, nullable=True)

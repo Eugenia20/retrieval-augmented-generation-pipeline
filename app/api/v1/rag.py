@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.rate_limit import rate_limiter
@@ -16,16 +16,33 @@ from app.services.file_parser import parse_pdf, parse_docx, parse_txt
 from app.utils.pagination import paginate
 from app.core.logger import logger
 
+from app.schemas.rag import QueryRequest, QueryResponse
+from fastapi import Request
+
 router = APIRouter(prefix="/rag", tags=["RAG"])
 
 
 # =========================
 # RUN QUERY
 # =========================
-@router.post("/query")
+@router.post(
+    "/query",
+    response_model=QueryResponse,
+    summary="Ask the AI system",
+    description="""
+Send a query to the RAG pipeline.
+
+Features:
+- Language detection (EN, RU, ZH)
+- Document retrieval
+- AI answer generation
+- Confidence scoring
+"""
+)
 @rate_limiter(limit=10, window=60)
 async def query_rag(
-    query: str,
+    http_request: Request,
+    query: QueryRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -34,13 +51,18 @@ async def query_rag(
         current_user.id,
         current_user.employee_id,
         current_user.department,
-        query
+        query.query
     )
+
 
 # =========================
 # USER HISTORY
 # =========================
-@router.get("/history")
+@router.get(
+    "/history",
+    summary="Get user query history",
+    description="Returns paginated history of user queries with optional filters"
+)
 def get_history(
     page: int = 1,
     limit: int = 10,
@@ -53,15 +75,12 @@ def get_history(
         Query.user_id == current_user.id
     )
 
-    #  search filter
     if search:
         query = query.filter(Query.question.ilike(f"%{search}%"))
 
-    #  language filter
     if language:
         query = query.filter(Query.language == language)
 
-    # sorting
     query = query.order_by(Query.created_at.desc())
 
     return paginate(query, page, limit)
@@ -70,7 +89,20 @@ def get_history(
 # =========================
 # FILE UPLOAD (ADMIN)
 # =========================
-@router.post("/upload")
+@router.post(
+    "/upload",
+    summary="Upload document",
+    description="""
+Upload a document to the system.
+
+Supported formats:
+- PDF
+- DOCX
+- TXT
+
+Only admins can upload documents.
+"""
+)
 def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -78,9 +110,7 @@ def upload_document(
 ):
     filename = file.filename.lower()
 
-    # =========================
-    # PARSE FILE
-    # =========================
+    # Parse file
     if filename.endswith(".pdf"):
         text = parse_pdf(file)
 
@@ -91,12 +121,11 @@ def upload_document(
         text = parse_txt(file)
 
     else:
-        return {"error": "Unsupported file type"}
+        raise HTTPException(status_code=400, detail="Unsupported file type")
 
     logger.info(f"Document uploaded: {filename} by admin {current_admin.id}")
-    # =========================
-    # SAVE DOCUMENT METADATA
-    # =========================
+
+    # Save metadata
     doc = Document(
         filename=filename,
         department=current_admin.department,
@@ -107,9 +136,7 @@ def upload_document(
     db.commit()
     db.refresh(doc)
 
-    # =========================
-    # INGEST
-    # =========================
+    # Ingest
     return ingest_document(
         text,
         document_id=doc.id,

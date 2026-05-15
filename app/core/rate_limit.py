@@ -1,19 +1,17 @@
 import time
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from functools import wraps
+import inspect
 
-# simple in-memory store
 requests_log = {}
-
 
 def rate_limiter(limit: int, window: int):
     def decorator(func):
         @wraps(func)
-        def wrapper(*args, **kwargs):
-            # identify user by IP (basic)
-            request = kwargs.get("request")
+        async def wrapper(*args, **kwargs):
+            request: Request = kwargs.get("http_request") or kwargs.get("request")
 
-            if request:
+            if request and request.client:
                 ip = request.client.host
             else:
                 ip = "global"
@@ -23,21 +21,22 @@ def rate_limiter(limit: int, window: int):
             if ip not in requests_log:
                 requests_log[ip] = []
 
-            # remove old requests
+            # clean old requests
             requests_log[ip] = [
                 t for t in requests_log[ip]
                 if now - t < window
             ]
 
             if len(requests_log[ip]) >= limit:
-                raise HTTPException(
-                    status_code=429,
-                    detail="Too many requests"
-                )
+                raise HTTPException(status_code=429, detail="Too many requests")
 
             requests_log[ip].append(now)
 
-            return func(*args, **kwargs)
+            # 🔥 FIX HERE
+            if inspect.iscoroutinefunction(func):
+                return await func(*args, **kwargs)
+            else:
+                return func(*args, **kwargs)
 
         return wrapper
     return decorator
